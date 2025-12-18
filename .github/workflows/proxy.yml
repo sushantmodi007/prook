@@ -9,35 +9,53 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Enable RDP
+      - name: Enable RDP (no restart)
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" `
+            -Value 0
+
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Restart-Service TermService
 
       - name: Create RDP User
         run: |
           $password = "1234"
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
+
+          if (Get-LocalUser -Name "rdp" -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name "rdp"
+          }
+
           New-LocalUser -Name "rdp" -Password $secure -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "rdp"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "rdp"
 
       - name: Install Tailscale
         run: |
-          Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile ts.exe
+          Invoke-WebRequest `
+            https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
+            -OutFile ts.exe
+
           Start-Process ts.exe -ArgumentList "/quiet" -Wait
 
       - name: Start Tailscale
         run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-win
+          & "C:\Program Files\Tailscale\tailscale.exe" `
+            up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=gh-win
 
-      - name: Show RDP Info
+      - name: Show RDP Info and Keep Alive
         run: |
           $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
+
           Write-Host "=============================="
-          Write-Host "RDP ADDRESS: $ip"
-          Write-Host "USERNAME: rdp"
-          Write-Host "PASSWORD: 1234"
+          Write-Host "RDP ADDRESS : $ip"
+          Write-Host "USERNAME    : rdp"
+          Write-Host "PASSWORD    : 1234"
           Write-Host "=============================="
-          while ($true) { Start-Sleep 300 }
+
+          while ($true) {
+            Start-Sleep 300
+          }
