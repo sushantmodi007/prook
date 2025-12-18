@@ -1,4 +1,4 @@
-name: Single Working Proxy
+name: Single SOCKS5 Proxy (Tailscale)
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ jobs:
   proxy:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+
     steps:
       - name: Install Tailscale
         run: |
@@ -16,22 +17,35 @@ jobs:
         run: |
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-proxy
 
-      - name: Install SOCKS5 proxy
+      - name: Install and Configure SOCKS5 (Dante)
         run: |
           sudo apt update -y
           sudo apt install -y dante-server
-          echo "internal: lo port = 1080" | sudo tee /etc/danted.conf
-          echo "external: eth0" | sudo tee -a /etc/danted.conf
-          echo "socksmethod: none" | sudo tee -a /etc/danted.conf
-          echo "clientmethod: none" | sudo tee -a /etc/danted.conf
-          echo "user.privileged: root" | sudo tee -a /etc/danted.conf
-          echo "user.unprivileged: nobody" | sudo tee -a /etc/danted.conf
-          echo "client pass { from: 0.0.0.0/0 to: 0.0.0.0/0 }" | sudo tee -a /etc/danted.conf
-          echo "pass { from: 0.0.0.0/0 to: 0.0.0.0/0 }" | sudo tee -a /etc/danted.conf
-          sudo danted
 
-      - name: Output proxy
+          sudo tee /etc/danted.conf > /dev/null <<EOF
+internal: 0.0.0.0 port = 1080
+external: eth0
+socksmethod: none
+clientmethod: none
+user.privileged: root
+user.unprivileged: nobody
+
+client pass {
+  from: 0.0.0.0/0 to: 0.0.0.0/0
+}
+
+socks pass {
+  from: 0.0.0.0/0 to: 0.0.0.0/0
+}
+EOF
+
+          sudo systemctl restart danted
+          sudo systemctl status danted --no-pager
+
+      - name: Show Proxy (USE THIS)
         run: |
-          TS_IP=$(tailscale ip -4)
-          echo "SOCKS5 PROXY => $TS_IP:1080"
+          echo "=============================="
+          echo "YOUR SOCKS5 PROXY:"
+          tailscale ip -4 | sed 's/$/:1080/'
+          echo "=============================="
           sleep 21600
