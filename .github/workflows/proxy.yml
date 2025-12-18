@@ -1,4 +1,4 @@
-name: Windows RDP Stable (ACTUALLY FINAL)
+name: Windows RDP + SOCKS5 Proxy
 
 on:
   workflow_dispatch:
@@ -15,60 +15,64 @@ jobs:
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
             -Name "fDenyTSConnections" `
             -Value 0
-
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-      - name: Disable password complexity (TEMP)
+      - name: Disable password complexity
         run: |
           secedit /export /cfg C:\secpol.cfg
           (Get-Content C:\secpol.cfg) `
             -replace "PasswordComplexity = 1","PasswordComplexity = 0" `
             -replace "MinimumPasswordLength = \d+","MinimumPasswordLength = 4" |
             Set-Content C:\secpol.cfg
-
           secedit /configure /db C:\Windows\security\local.sdb /cfg C:\secpol.cfg /areas SECURITYPOLICY
           gpupdate /force
 
-      - name: Create RDP User (NOW IT WILL WORK)
+      - name: Create RDP User
         run: |
           $password = "1234"
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
-
           if (Get-LocalUser -Name "rdp" -ErrorAction SilentlyContinue) {
             Remove-LocalUser -Name "rdp"
           }
-
           New-LocalUser -Name "rdp" -Password $secure -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "rdp"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "rdp"
 
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
-
       - name: Install Tailscale
         run: |
-          Invoke-WebRequest `
-            https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
-            -OutFile ts.exe
-
+          Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile ts.exe
           Start-Process ts.exe -ArgumentList "/quiet" -Wait
 
       - name: Start Tailscale
         run: |
-          & "C:\Program Files\Tailscale\tailscale.exe" `
-            up `
+          & "C:\Program Files\Tailscale\tailscale.exe" up `
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=gh-win
+            --hostname=gh-win-all
 
-      - name: Show RDP Info and Keep Alive
+      - name: Download gost (proxy)
+        run: |
+          Invoke-WebRequest `
+            https://github.com/go-gost/gost/releases/download/v3.0.0/gost_3.0.0_windows_amd64.zip `
+            -OutFile gost.zip
+          Expand-Archive gost.zip gost
+          Move-Item gost\gost.exe C:\gost.exe
+
+      - name: Start SOCKS5 Proxy
+        run: |
+          Start-Process `
+            -FilePath C:\gost.exe `
+            -ArgumentList "-L=socks5://:1080" `
+            -WindowStyle Hidden
+
+      - name: Show Access Info + Keep Alive
         run: |
           $ip = & "C:\Program Files\Tailscale\tailscale.exe" ip -4
 
           Write-Host "=============================="
-          Write-Host "RDP ADDRESS : $ip"
-          Write-Host "USERNAME    : rdp"
-          Write-Host "PASSWORD    : $env:RDP_PASSWORD"
+          Write-Host "RDP  : $ip:3389"
+          Write-Host "USER : rdp"
+          Write-Host "PASS : 1234"
+          Write-Host "PROXY: $ip:1080 (SOCKS5)"
           Write-Host "=============================="
 
-          while ($true) {
-            Start-Sleep 300
-          }
+          while ($true) { Start-Sleep 300 }
