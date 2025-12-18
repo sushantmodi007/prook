@@ -17,32 +17,29 @@ jobs:
         run: |
           sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-proxy
 
-      - name: Install and Configure SOCKS5 (Dante)
+      - name: Install Dante SOCKS5
         run: |
           sudo apt update -y
           sudo apt install -y dante-server
 
-          sudo tee /etc/danted.conf > /dev/null <<EOF
-internal: 0.0.0.0 port = 1080
-external: eth0
-socksmethod: none
-clientmethod: none
-user.privileged: root
-user.unprivileged: nobody
+      - name: Configure Dante (SAFE)
+        run: |
+          sudo rm -f /etc/danted.conf
+          echo "internal: 0.0.0.0 port = 1080" | sudo tee -a /etc/danted.conf
+          echo "external: eth0" | sudo tee -a /etc/danted.conf
+          echo "socksmethod: none" | sudo tee -a /etc/danted.conf
+          echo "clientmethod: none" | sudo tee -a /etc/danted.conf
+          echo "user.privileged: root" | sudo tee -a /etc/danted.conf
+          echo "user.unprivileged: nobody" | sudo tee -a /etc/danted.conf
+          echo "client pass { from: 0.0.0.0/0 to: 0.0.0.0/0 }" | sudo tee -a /etc/danted.conf
+          echo "socks pass { from: 0.0.0.0/0 to: 0.0.0.0/0 }" | sudo tee -a /etc/danted.conf
 
-client pass {
-  from: 0.0.0.0/0 to: 0.0.0.0/0
-}
-
-socks pass {
-  from: 0.0.0.0/0 to: 0.0.0.0/0
-}
-EOF
-
+      - name: Start Dante
+        run: |
           sudo systemctl restart danted
           sudo systemctl status danted --no-pager
 
-      - name: Show Proxy (USE THIS)
+      - name: SHOW PROXY (THIS IS IT)
         run: |
           echo "=============================="
           echo "YOUR SOCKS5 PROXY:"
