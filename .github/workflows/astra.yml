@@ -41,9 +41,13 @@ jobs:
       - name: Install Visual Studio Code
         run: |
           choco install vscode -y --no-progress
-          code --version
+          & "C:\Program Files\Microsoft VS Code\bin\code.cmd" --version
 
-      - name: Install Python (latest stable)
+      - name: Permanently add VS Code to system PATH
+        run: |
+          setx /M PATH "%PATH%;C:\Program Files\Microsoft VS Code\bin"
+
+      - name: Install Python
         run: |
           choco install python -y --no-progress
           python --version
@@ -59,14 +63,33 @@ jobs:
           New-Item -ItemType File -Path "$base\noom.json" -Force | Out-Null
           New-Item -ItemType File -Path "$base\lepo.py" -Force | Out-Null
 
-          Get-ChildItem $base
+      - name: Install VS Code Python extensions
+        run: |
+          & "C:\Program Files\Microsoft VS Code\bin\code.cmd" --install-extension ms-python.python --force
+          & "C:\Program Files\Microsoft VS Code\bin\code.cmd" --install-extension ms-python.vscode-pylance --force
+
+      - name: Auto-open VS Code with lol folder on RDP login
+        run: |
+          $action = New-ScheduledTaskAction `
+            -Execute "C:\Program Files\Microsoft VS Code\bin\code.cmd" `
+            -Argument "C:\Users\rdp\lol"
+
+          $trigger = New-ScheduledTaskTrigger -AtLogOn -User "rdp"
+
+          Register-ScheduledTask `
+            -TaskName "OpenVSCodeOnLogin" `
+            -Action $action `
+            -Trigger $trigger `
+            -User "rdp" `
+            -RunLevel Highest `
+            -Force
 
       - name: Install Tailscale
         run: |
           Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile ts.exe
           Start-Process ts.exe -ArgumentList "/quiet" -Wait
 
-      - name: Start Tailscale SERVICE (critical)
+      - name: Start Tailscale SERVICE
         run: |
           Start-Service Tailscale
           Start-Sleep 5
@@ -79,27 +102,21 @@ jobs:
             --accept-routes=false `
             --accept-dns=false
 
-      - name: Verify Tailscale is actually connected
+      - name: Verify Tailscale connection
         run: |
           $ts = "C:\Program Files\Tailscale\tailscale.exe"
 
           for ($i = 0; $i -lt 15; $i++) {
-            $status = & $ts status
-            if ($status -match "100\." ) {
-              break
-            }
+            if ((& $ts status) -match "100\.") { break }
             Start-Sleep 3
           }
 
           $ip = & $ts ip -4
-          if (-not $ip) {
-            Write-Error "Tailscale failed to obtain IP. Node never joined."
-            exit 1
-          }
+          if (-not $ip) { exit 1 }
 
           echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
-      - name: Download gost (proxy)
+      - name: Download gost
         run: |
           Invoke-WebRequest `
             https://github.com/go-gost/gost/releases/download/v3.0.0/gost_3.0.0_windows_amd64.zip `
