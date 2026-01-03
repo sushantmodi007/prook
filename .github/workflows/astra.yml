@@ -1,0 +1,128 @@
+name: Windows RDP + SOCKS5 Proxy (ACTUAL FINAL)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" `
+            -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - name: Disable password complexity
+        run: |
+          secedit /export /cfg C:\secpol.cfg
+          (Get-Content C:\secpol.cfg) `
+            -replace "PasswordComplexity = 1","PasswordComplexity = 0" `
+            -replace "MinimumPasswordLength = \d+","MinimumPasswordLength = 4" |
+            Set-Content C:\secpol.cfg
+          secedit /configure /db C:\Windows\security\local.sdb /cfg C:\secpol.cfg /areas SECURITYPOLICY
+          gpupdate /force
+
+      - name: Create RDP User
+        run: |
+          $password = "1234"
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          if (Get-LocalUser -Name "rdp" -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name "rdp"
+          }
+          New-LocalUser -Name "rdp" -Password $secure -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "rdp"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "rdp"
+
+      - name: Install Visual Studio Code
+        run: |
+          choco install vscode -y --no-progress
+          code --version
+
+      - name: Install Python (latest stable)
+        run: |
+          choco install python -y --no-progress
+          python --version
+
+      - name: Create lol folder and required files
+        run: |
+          $base = "$env:USERPROFILE\lol"
+          New-Item -ItemType Directory -Path $base -Force | Out-Null
+
+          New-Item -ItemType File -Path "$base\pro.txt" -Force | Out-Null
+          New-Item -ItemType File -Path "$base\humanex_settings.json" -Force | Out-Null
+          New-Item -ItemType File -Path "$base\useragets.txt" -Force | Out-Null
+          New-Item -ItemType File -Path "$base\noom.json" -Force | Out-Null
+          New-Item -ItemType File -Path "$base\lepo.py" -Force | Out-Null
+
+          Get-ChildItem $base
+
+      - name: Install Tailscale
+        run: |
+          Invoke-WebRequest https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe -OutFile ts.exe
+          Start-Process ts.exe -ArgumentList "/quiet" -Wait
+
+      - name: Start Tailscale SERVICE (critical)
+        run: |
+          Start-Service Tailscale
+          Start-Sleep 5
+
+      - name: Bring Tailscale up
+        run: |
+          & "C:\Program Files\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=gh-win-all `
+            --accept-routes=false `
+            --accept-dns=false
+
+      - name: Verify Tailscale is actually connected
+        run: |
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+
+          for ($i = 0; $i -lt 15; $i++) {
+            $status = & $ts status
+            if ($status -match "100\." ) {
+              break
+            }
+            Start-Sleep 3
+          }
+
+          $ip = & $ts ip -4
+          if (-not $ip) {
+            Write-Error "Tailscale failed to obtain IP. Node never joined."
+            exit 1
+          }
+
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Download gost (proxy)
+        run: |
+          Invoke-WebRequest `
+            https://github.com/go-gost/gost/releases/download/v3.0.0/gost_3.0.0_windows_amd64.zip `
+            -OutFile gost.zip
+          Expand-Archive gost.zip gost
+          Move-Item gost\gost.exe C:\gost.exe
+
+      - name: Start SOCKS5 Proxy
+        run: |
+          Start-Process `
+            -FilePath C:\gost.exe `
+            -ArgumentList "-L=socks5://:1080" `
+            -WindowStyle Hidden
+
+      - name: Show Access Info + Keep Alive
+        run: |
+          $ip = $env:TAILSCALE_IP
+
+          Write-Host "=============================="
+          Write-Host "RDP   : $ip:3389"
+          Write-Host "USER  : rdp"
+          Write-Host "PASS  : 1234"
+          Write-Host "PROXY : $ip:1080 (SOCKS5)"
+          Write-Host "=============================="
+
+          while ($true) { Start-Sleep 300 }
